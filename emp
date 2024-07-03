@@ -1,0 +1,147 @@
+#!/usr/local/bin/node
+/*emp-email processor and decoder.reads mbox email from stdin,formats it, decodes base64
+strings if they are and writes resulting file to stdout. if a pain text representaion of message
+body exists then other body encodings won't be included to the resulting file (except attachments).*/
+var fs=require("fs");
+var inp=fs.readFileSync(0).toString();//read stdin
+var m={pref:inp.split("\n")[0]};//extract first line from mbox format
+function remoquo(s){//remove double quotes
+return s.replaceAll(/\"/g,"");
+}
+function checktyp(typs,t,v)//examine body entry header value
+{
+if(!typs[t]){return false};
+return typs[t].startsWith(v);
+};
+function remexspa(s)//remove extra spaces and tabs from string
+{
+return s.replace(/[ \t]+/g," ");
+};
+function mimetob64(s)
+{
+return s.substring(10,s.length-2);
+};
+function b64d(s){//decode base64
+return Buffer.from(s,"base64").toString("utf-8")
+}
+function decmim(s)//decode mime into b64 and return original string with decoded fragment
+{
+var encodma=s.match(/=\?(UTF-8|utf-8)\?.*\?=/); 
+if(encodma){
+var enc=encodma[0];
+return s.replace(new RegExp(enc.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")),
+	b64d(mimetob64(enc)))
+}
+return s;
+};
+function extadr(h)//extract email addresses from header
+{
+var withnam=inp.match(new RegExp(`${h}: (.*) (<.*@.*>)`));
+if(withnam){
+	var{1:nam,2:addr}=withnam;
+	return `${remoquo(nam)} ${addr}`
+}
+else return remoquo(inp.match(new RegExp(`${h}: (.*)\n`))[1]);
+};
+m.head={};
+m.head.From=extadr("From");
+m.head.To=extadr("To");
+m.head.Subject=inp.match(/Subject: (.*)/)[1]
+/*process headers(decode b64 if they have such a format)*/
+Object.keys(m.head).forEach(
+	(field)=> {
+		var headval=m.head[field];
+		m.head[field]=decmim(headval);
+	}
+)
+/*parse body*/
+m.body=[];
+var bodystr;
+var bodyenma=inp.match(/^--[^\s]*$/m);
+if(bodyenma)
+{
+var boundm=inp.match(/boundary=\"(.*)\"/m);
+var ents=[];
+var spt=inp.split(bodyenma[0]).slice(1,-1);
+if(boundm){
+ents.push(...(spt[0].split(boundm[1]).slice(2,-1).map(t=>t.slice(0,t.lastIndexOf("\n")+1))));
+ents.push(...spt.slice(1))
+}
+else{ents=spt;}
+/*split file into body entries*/
+m.body=ents.map((s,i)=>{
+	var ss=s.substring(1);
+	var div=ss.indexOf("\n\n");
+	var typs=remexspa(ss.substring(0,div).replaceAll(/;[\s\t]*\n/g,"; "));
+	var con=ss.substring(div+2);
+	var typobj={};
+	typs=typs.split("\n").filter(s=>s!=="");
+	var j=0;
+	var typs2=[];
+	for(var i=0;i<typs.length;++i){
+	//handle separated base64 encoding filename
+	if(typs[i][0]===" "||typs[i][0]==="\t"){
+		var rst=decmim(typs[i].slice(1));
+		typs2[j-1]=typs2[j-1].slice(0,-1)+rst;
+	}else{typs2[j]=decmim(typs[i]);++j;}
+	};
+	typs2.forEach((ts)=> {
+		var {1:key,2:val}=/(.*):\s*(.*)$/mgs.exec(ts);
+		typobj[key]=decmim(val);
+	})
+	//typs-section with content-type and other fields
+	//con-entry content
+	return {typs:typobj,con};
+});
+/*if we've got text plain variant, they clean up all other body entries except attachments,
+otherwise leave all the entries as they are*/
+if(m.body.some(
+	({typs})=> (
+		/*text/plain type may occurs as attachment type it's not the case we're looking for*/
+		(typs["Content-Disposition"]? !typs["Content-Disposition"].startsWith("attachment"):true)
+		&&(typs["Content-Type"].startsWith("text/plain"))
+	)
+)){
+m.body=m.body.filter(//remove other entries
+	({typs})=>(
+		(checktyp(typs,"Content-Type","text/plain"))
+		||(checktyp(typs,"Content-Disposition","attachment"))//we don't want to remove attachments
+	)
+)
+}
+/*decode body content if it's base64 encoded*/
+m.body.forEach(
+	({typs,con},i)=>{
+	if(
+		(!checktyp(typs,"Content-Disposition","attachment"))
+		&&(checktyp(typs,"Content-Transfer-Encoding","base64"))
+	){
+	m.body[i].con=b64d(con);
+	}
+	}
+)
+var mark=Math.random().toString(32).substring(2,8);//curstom mark for body entries
+bodystr=m.body.reduce(
+	(acc,{typs,con},i)=>{
+		/*don't print typs section for body entry if it's a plain text message body*/
+		if((checktyp(typs,"Content-Disposition","attachment"))
+		 ||(!checktyp(typs,"Content-Type","text/plain")))
+		{
+			acc+=`${i?"\n":""}~${mark}\n`;//^~<6 digits>$ - entry separator
+			acc+=Object.keys(typs).reduce(
+				(acctyp,typk)=>(
+					acctyp+=`${typk}: ${typs[typk]}\n`
+				),""
+			)
+			acc+="\n"
+		}
+		acc+=con;
+		return acc;
+	},""
+)
+}else{//message body has no entries already
+bodystr=inp.substring(inp.indexOf("\n\n")+2)
+}
+/*build up resulting string*/
+var mailstr=`${m.pref}\nFrom: ${m.head.From}\nTo: ${m.head.To}\nSubject: ${m.head.Subject}\n\n${bodystr}\n`
+process.stdout.write(mailstr);//write result to stdout
