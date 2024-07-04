@@ -18,6 +18,7 @@ var h=ent[0];
 if(h.includes("Content-Disposition: attachment")){aen.push({h:h,b:ent[1]})}
 }
 )
+if(!aen.length)return;//exit if there are no attachments in the email
 var arg=process.argv[2];
 if(arg===undefined){//if argument is passed
 /*write attachment headers to stdout*/
