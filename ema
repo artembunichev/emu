@@ -1,0 +1,32 @@
+#!/usr/local/bin/node
+/*ema-email attachment extractor. extracts attachments from email file produced by emp program(./emp)
+it invoked without arguments, lists all the attachment entries in the file with their indexes that
+allows you to specify them in order to extract this particular attachment entry body.
+if attachment etntry index is specified then writes this attachment body to stdout.*/
+var fs=require("fs");
+var inp=fs.readFileSync(0).toString();//read stdin
+var mrk=inp.match(/^~[\d\w]{6}$/m);//extract entry delimiter mark
+if(!mrk)return;
+mrk=mrk[0];
+var entrs=inp.split(mrk).slice(1);//body entries
+var aen=[];//attachment entries array
+entrs.forEach(
+(ent)=>{
+ent=ent.slice(1).split("\n\n");
+var h=ent[0];
+/*save entry if it's an attachment*/
+if(h.includes("Content-Disposition: attachment")){aen.push({h:h,b:ent[1]})}
+}
+)
+var arg=process.argv[2];
+if(arg===undefined){//if argument is passed
+/*write attachment headers to stdout*/
+var str=aen.reduce((acc,e,i)=>{if(i){acc+="\n\n"};acc+=`${i}: `;return acc+=e.h},"")
+process.stdout.write(str);
+return;//exit the program
+}else {
+arg=+arg;
+if(arg>=aen.length){return};
+process.stdout.write(aen[arg].b);//write entry body to stdout
+return//exit
+}l
