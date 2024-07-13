@@ -2,7 +2,8 @@
 /*ema-email attachment extractor. extracts attachments from email file produced by emp program(./emp)
 it invoked without arguments, lists all the attachment entries in the file with their indexes that
 allows you to specify them in order to extract this particular attachment entry body.
-if attachment etntry index is specified then writes this attachment body to stdout.*/
+if attachment etntry index is specified then writes this attachment body to stdout.
+if "-" is specified then prints mail without attachments to stdout.*/
 var fs=require("fs");
 var inp=fs.readFileSync(0).toString();//read stdin
 var mrk=inp.match(/^~[\d\w]{6}$/m);//extract entry delimiter mark
