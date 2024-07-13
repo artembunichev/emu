@@ -43,6 +43,16 @@ if(withnam){
 }
 else return remoquo(inp.match(new RegExp(`${h}: (.*)\n`))[1]);
 };
+function ltnl(s){//remove leading and trailing new lines
+	var s1=s.replace(/^[\n]*/,"");
+	var s2=s1.split("").reverse().join("").replace(/^[\n]*/,"").split("").reverse().join("")
+	return s2
+}
+function isata(typs)//is attachment
+{
+return (checktyp(typs,"Content-Disposition","attachment"))
+	||(checktyp(typs,"Content-Disposition","inline"))
+};
 m.head={};
 m.head.From=extadr("From");
 m.head.To=extadr("To");
@@ -60,16 +70,11 @@ var bodystr;
 var bodyenma=inp.match(/^--[^\s]*$/m);
 if(bodyenma)
 {
-var boundm=inp.match(/boundary=\"(.*)\"/m);
 var ents=[];
 var spt=inp.split(bodyenma[0]).slice(1,-1);
-if(boundm){
-ents.push(...(spt[0].split(boundm[1]).slice(2,-1).map(t=>t.slice(0,t.lastIndexOf("\n")+1))));
-ents.push(...spt.slice(1))
-}
-else{ents=spt;}
+ents=spt;
 /*split file into body entries*/
-m.body=ents.map((s,i)=>{
+var fientsmap=ents.map((s,i)=>{//first ents map
 	var ss=s.substring(1);
 	var div=ss.indexOf("\n\n");
 	var typs=remexspa(ss.substring(0,div).replaceAll(/;[\s\t]*\n/g,"; "));
@@ -93,6 +98,37 @@ m.body=ents.map((s,i)=>{
 	//con-entry content
 	return {typs:typobj,con};
 });
+fientsmap.forEach((ent)=> {
+	if(ent.typs["Content-Type"].startsWith("multipart")){
+	/*unravel multipart parts*/
+	var boum=ent.typs["Content-Type"].match(/boundary=\"(.*?)\"/)[1]//boundary mark
+	/*multipart entries*/
+	var multe=ltnl(ent.con).split(boum).slice(1,-1).map(t=>t.slice(0,t.lastIndexOf("\n\n"))
+		.replace(/^[\n]*/,"").split("\n\n")).map(({0:typs,1:con})=>{
+				var typobj={};
+				var typs2=[];
+				var j=0;
+				typs=typs.split("\n").filter(s=>s!=="").map(a=>a.replaceAll(/;[\s\t]*\n/g,"; "));
+				for(var i=0;i<typs.length;++i){
+				//handle separated base64 encoding filename
+				if(typs[i][0]===" "||typs[i][0]==="\t"){
+					var rst=decmim(typs[i].slice(1));
+					typs2[j-1]=typs2[j-1].slice(0,-1)+rst;
+				}else{typs2[j]=decmim(typs[i]);++j;}
+				};
+				typs2.forEach((ts)=> {
+					var {1:key,2:val}=/(.*):\s*(.*)$/mgs.exec(ts);
+					typobj[key]=decmim(val);
+				})
+				return {typs:typobj,con}
+			});
+	multe.forEach(
+	(mult)=>m.body.push(mult)//add multpart entry to mail body
+	)
+	}else{
+	m.body.push(ent)//add entry to mail body list
+	}
+})
 /*if we've got text plain variant, they clean up all other body entries except attachments,
 otherwise leave all the entries as they are*/
 if(m.body.some(
@@ -105,7 +141,7 @@ if(m.body.some(
 m.body=m.body.filter(//remove other entries
 	({typs})=>(
 		(checktyp(typs,"Content-Type","text/plain"))
-		||(checktyp(typs,"Content-Disposition","attachment"))//we don't want to remove attachments
+		||(isata(typs))//we don't want to remove attachments
 	)
 )
 }
@@ -113,7 +149,7 @@ m.body=m.body.filter(//remove other entries
 m.body.forEach(
 	({typs,con},i)=>{
 	if(
-		(!checktyp(typs,"Content-Disposition","attachment"))
+		(!isata(typs))
 		&&(checktyp(typs,"Content-Transfer-Encoding","base64"))
 	){
 	m.body[i].con=b64d(con);
@@ -124,7 +160,7 @@ var mark=Math.random().toString(32).substring(2,8);//curstom mark for body entri
 bodystr=m.body.reduce(
 	(acc,{typs,con},i)=>{
 		/*don't print typs section for body entry if it's a plain text message body*/
-		if((checktyp(typs,"Content-Disposition","attachment"))
+		if((isata(typs))
 		 ||(!checktyp(typs,"Content-Type","text/plain")))
 		{
 			acc+=`${i?"\n":""}~${mark}\n`;//^~<6 digits>$ - entry separator
