@@ -10,25 +10,37 @@ if(!mrk)return;
 mrk=mrk[0];
 var entrs=inp.split(mrk).slice(1);//body entries
 var aen=[];//attachment entries array
+var atis=[];//attachment entry indexes
 entrs.forEach(
-(ent)=>{
+(ent,i)=>{
 ent=ent.slice(1).split("\n\n");
 var h=ent[0];
 /*save entry if it's an attachment or inline attachment.*/
 if(h.includes("Content-Disposition: attachment")
-||(h.includes("Content-Disposition: inline"))){aen.push({h:h,b:ent[1]})}
+||(h.includes("Content-Disposition: inline"))){atis.push(i);aen.push({h:h,b:ent[1]})}
 }
 )
 if(!aen.length)return;//exit if there are no attachments in the email
 var arg=process.argv[2];
-if(arg===undefined){//if argument is passed
+if(arg===undefined){//if argument isn't passed
 /*write attachment headers to stdout*/
 var str=aen.reduce((acc,e,i)=>{if(i){acc+="\n\n"};acc+=`${i}: `;return acc+=e.h},"")
 process.stdout.write(str);
 return;//exit the program
-}else {
+}else {//if argument is passed
+if(arg=="-"){//if dash is passed-print mail without attachments
+var r=inp.slice(0,inp.indexOf(mrk))//resulting string.
+entrs.forEach((e,i)=>{
+if(!atis.includes(i)){//print only non-attachment entries
+r+=`${mrk}${e}`//prepend entry with mark
+}
+})
+process.stdout.write(r)//write mail w/o attachments to stdout
+return//exit here
+}else{//otherwise, treat passed argument as attachment index
 arg=+arg;
 if(arg>=aen.length){return};
 process.stdout.write(aen[arg].b);//write entry body to stdout
 return//exit
-}l
+}
+}
