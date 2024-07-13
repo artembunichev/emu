@@ -14,8 +14,9 @@ entrs.forEach(
 (ent)=>{
 ent=ent.slice(1).split("\n\n");
 var h=ent[0];
-/*save entry if it's an attachment*/
-if(h.includes("Content-Disposition: attachment")){aen.push({h:h,b:ent[1]})}
+/*save entry if it's an attachment or inline attachment.*/
+if(h.includes("Content-Disposition: attachment")
+||(h.includes("Content-Disposition: inline"))){aen.push({h:h,b:ent[1]})}
 }
 )
 if(!aen.length)return;//exit if there are no attachments in the email
