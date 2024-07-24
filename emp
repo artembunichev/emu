@@ -56,12 +56,12 @@ return (checktyp(typs,"Content-Disposition","attachment"))
 m.head={};
 m.head.From=extadr("From");
 m.head.To=extadr("To");
-m.head.Subject=inp.match(/Subject: (.*)/)[1]
+m.head.Subject=inp.match(/Subject: (.*)/)?.[1]
 /*process headers(decode b64 if they have such a format)*/
 Object.keys(m.head).forEach(
 	(field)=> {
 		var headval=m.head[field];
-		m.head[field]=decmim(headval);
+		m.head[field]=headval ? decmim(headval) : "";
 	}
 )
 /*parse body*/
