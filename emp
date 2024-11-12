@@ -1,183 +1,345 @@
-#!/usr/local/bin/node
-/*emp-email processor and decoder.reads mbox email from stdin,formats it, decodes base64
-strings if they are and writes resulting file to stdout. if a pain text representaion of message
-body exists then other body encodings won't be included to the resulting file (except attachments).*/
-var fs=require("fs");
-var inp=fs.readFileSync(0).toString();//read stdin
-var m={pref:inp.split("\n")[0]};//extract first line from mbox format
-function remoquo(s){//remove double quotes
-return s.replaceAll(/\"/g,"");
-}
-function checktyp(typs,t,v)//examine body entry header value
-{
-if(!typs[t]){return false};
-return typs[t].startsWith(v);
-};
-function remexspa(s)//remove extra spaces and tabs from string
-{
-return s.replace(/[ \t]+/g," ");
-};
-function mimetob64(s)
-{
-return s.substring(10,s.length-2);
-};
-function b64d(s){//decode base64
-return Buffer.from(s,"base64").toString("utf-8")
-}
-function decmim(s)//decode mime into b64 and return original string with decoded fragment
-{
-var encodma=s.match(/=\?(UTF-8|utf-8)\?.*\?=/); 
-if(encodma){
-var enc=encodma[0];
-return s.replace(new RegExp(enc.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")),
-	b64d(mimetob64(enc)))
-}
-return s;
-};
-function extadr(h)//extract email addresses from header
-{
-var withnam=inp.match(new RegExp(`${h}: (.*) (<.*@.*>)`));
-if(withnam){
-	var{1:nam,2:addr}=withnam;
-	return `${remoquo(nam)} ${addr}`
-}
-else return remoquo(inp.match(new RegExp(`${h}: (.*)\n`))[1]);
-};
-function ltnl(s){//remove leading and trailing new lines
-	var s1=s.replace(/^[\n]*/,"");
-	var s2=s1.split("").reverse().join("").replace(/^[\n]*/,"").split("").reverse().join("")
-	return s2
-}
-function isata(typs)//is attachment
-{
-return (checktyp(typs,"Content-Disposition","attachment"))
-	||(checktyp(typs,"Content-Disposition","inline"))
-};
-m.head={};
-m.head.From=extadr("From");
-m.head.To=extadr("To");
-m.head.Subject=inp.match(/Subject: (.*)/)?.[1]
-/*process headers(decode b64 if they have such a format)*/
-Object.keys(m.head).forEach(
-	(field)=> {
-		var headval=m.head[field];
-		m.head[field]=headval ? decmim(headval) : "";
-	}
-)
-/*parse body*/
-m.body=[];
-var bodystr;
-var bodyenma=inp.match(/^--[^\s]*$/m);
-if(bodyenma)
-{
-var ents=[];
-var spt=inp.split(bodyenma[0]).slice(1,-1);
-ents=spt;
-/*split file into body entries*/
-var fientsmap=ents.map((s,i)=>{//first ents map
-	var ss=s.substring(1);
-	var div=ss.indexOf("\n\n");
-	var typs=remexspa(ss.substring(0,div).replaceAll(/;[\s\t]*\n/g,"; "));
-	var con=ss.substring(div+2);
-	var typobj={};
-	typs=typs.split("\n").filter(s=>s!=="");
-	var j=0;
-	var typs2=[];
-	for(var i=0;i<typs.length;++i){
-	//handle separated base64 encoding filename
-	if(typs[i][0]===" "||typs[i][0]==="\t"){
-		var rst=decmim(typs[i].slice(1));
-		typs2[j-1]=typs2[j-1].slice(0,-1)+rst;
-	}else{typs2[j]=decmim(typs[i]);++j;}
-	};
-	typs2.forEach((ts)=> {
-		var {1:key,2:val}=/(.*):\s*(.*)$/mgs.exec(ts);
-		typobj[key]=decmim(val);
-	})
-	//typs-section with content-type and other fields
-	//con-entry content
-	return {typs:typobj,con};
-});
-fientsmap.forEach((ent)=> {
-	if(ent.typs["Content-Type"].startsWith("multipart")){
-	/*unravel multipart parts*/
-	var boum=ent.typs["Content-Type"].match(/boundary=\"(.*?)\"/)[1]//boundary mark
-	/*multipart entries*/
-	var multe=ltnl(ent.con).split(boum).slice(1,-1).map(t=>t.slice(0,t.lastIndexOf("\n\n"))
-		.replace(/^[\n]*/,"").split("\n\n")).map(({0:typs,1:con})=>{
-				var typobj={};
-				var typs2=[];
-				var j=0;
-				typs=typs.split("\n").filter(s=>s!=="").map(a=>a.replaceAll(/;[\s\t]*\n/g,"; "));
-				for(var i=0;i<typs.length;++i){
-				//handle separated base64 encoding filename
-				if(typs[i][0]===" "||typs[i][0]==="\t"){
-					var rst=decmim(typs[i].slice(1));
-					typs2[j-1]=typs2[j-1].slice(0,-1)+rst;
-				}else{typs2[j]=decmim(typs[i]);++j;}
-				};
-				typs2.forEach((ts)=> {
-					var {1:key,2:val}=/(.*):\s*(.*)$/mgs.exec(ts);
-					typobj[key]=decmim(val);
-				})
-				return {typs:typobj,con}
-			});
-	multe.forEach(
-	(mult)=>m.body.push(mult)//add multpart entry to mail body
-	)
-	}else{
-	m.body.push(ent)//add entry to mail body list
-	}
-})
-/*if we've got text plain variant, they clean up all other body entries except attachments,
-otherwise leave all the entries as they are*/
-if(m.body.some(
-	({typs})=> (
-		/*text/plain type may occurs as attachment type it's not the case we're looking for*/
-		(typs["Content-Disposition"]? !typs["Content-Disposition"].startsWith("attachment"):true)
-		&&(typs["Content-Type"].startsWith("text/plain"))
-	)
-)){
-m.body=m.body.filter(//remove other entries
-	({typs})=>(
-		(checktyp(typs,"Content-Type","text/plain"))
-		||(isata(typs))//we don't want to remove attachments
-	)
-)
-}
-/*decode body content if it's base64 encoded*/
-m.body.forEach(
-	({typs,con},i)=>{
-	if(
-		(!isata(typs))
-		&&(checktyp(typs,"Content-Transfer-Encoding","base64"))
-	){
-	m.body[i].con=b64d(con);
-	}
-	}
-)
-var mark=Math.random().toString(32).substring(2,8);//curstom mark for body entries
-bodystr=m.body.reduce(
-	(acc,{typs,con},i)=>{
-		/*don't print typs section for body entry if it's a plain text message body*/
-		if((isata(typs))
-		 ||(!checktyp(typs,"Content-Type","text/plain")))
-		{
-			acc+=`${i?"\n":""}~${mark}\n`;//^~<6 digits>$ - entry separator
-			acc+=Object.keys(typs).reduce(
-				(acctyp,typk)=>(
-					acctyp+=`${typk}: ${typs[typk]}\n`
-				),""
-			)
-			acc+="\n"
+#!/usr/local/bin/perl
+
+#emp -- email processor and decoder.
+#reads mbox email from stdin, formats it, decodes base64
+#strings, if they are, and writes resulting file to stdout.
+#if a plain text representaion of message body exists,
+#then other body encodings won't be included to the
+#resulting file (except attachments).
+
+#a 2'd version actually - first was written in javascript.
+#so, this version is capable of being applied to an entire
+#mbox file, containing a bunch of mails (not like the 1'st
+#version, which could "parse" only a single letter and did
+#it in an awkward way), 'cause now it involves more-or-less
+#confident and straightforward line-by-line parsing.
+#as a feature, it fixes the "From " line delimiter from an
+#incorrect date format (perhaps, my email provider corrupts it):
+#actually swaps string components around.
+#also, it's much faster than its precedent.
+#this version is commented, just for the reader to understand
+#what's going on.
+
+
+# we'll use it for guess what.
+use MIME::Base64;
+
+# a sort of a key that is used as a multipart message part delimiter.
+my $part_id;
+
+# sort of a zone of a letter we're currently parsing.
+# it may be either:
+# "top" - the very frist line, indicating a start of a new letter,
+# "head" - letter headers, such as "From:", "To:", "Subject:", etc,
+# "types" - that's not necessary to occur, but it's a section where
+#           different types of a multi-part message are listed.
+# "body" - the message body itself (w/o its "types"),
+# or "" - let's call it "empty zone" - that one that may go after
+#         "head" section; everything up until the first "part id".
+#         in case of non-multi-part letter, the rest part that goes
+#         after mail headers will be treated as empty zone.
+#         well, there are a whole host of different email providers
+#         which do really different formatting of the messages,
+#         so we need to take at least some of them into account.
+my $within = "";
+
+# just a boolean flag, if last printed line was a new line,
+# for us not to print a redundant newline again.
+my $last_line_empty = 0;
+
+# this variable tells us if a plain text representaion
+# was found, then we can throw away html-like stuff.
+my $plain_text_found = 0;
+
+# variable is used for cases, when we're still in the process
+# of parsing part types, and we found html-type, and we're going
+# to indicate that everything up until next part must be thrown away.
+my $gonna_drop_part = 0;
+
+# this is somewhat akin to `$gonna_drop_part`, but it's only for
+# the line, we're currently in (e.g. type-header - we don't need it).
+my $drop_this_line = 0;
+
+# a flag, telling us if message body is encoded in base64.
+my $is_base64_body = 0;
+
+# read a standart input line-by-line.
+while( my $line = <> ) {
+	
+	# the line that indicates a begining of a new letter in
+	# mbox format is line that begins with "From ".
+	# we want to "catch" this line whether we come from either:
+	#  - empty zone -- as have already been said, it's quite
+	#     possible, especially in case of non-multi-part letter.
+	#  - the message body -- this is in case of multi-part letter;
+	#     every letter entry must end with a newline. so, in case
+	#     of a multi-part letter, we'll have a very last "part id"
+	#     in the end of the message anyway, and in terms of our
+	#     program we'll be in "types zone" (we expect a zone of
+	#     types after *every* part identifier; thanks to an apt
+	#     algorithm of mine), and, since every letter ends with
+	#     an empty line, we'll switch from "types" to message body.
+	#     and after all this, the next mail comes (we're in body).
+	if (
+		!$within
+		or
+		$within eq "body"
+	) {
+		# actually, as far as I know, the line mustn't contain
+		# a valid email address and all that (I didn't read the
+		# specification though), but, however, I'm not that sure
+		# if email provider perform something to distinguish
+		# occurrence of this line withing the message body,
+		# hence I look for a valid email address (and valid
+		# date also) too.
+		# also we should count the case with corrupted date format.
+		if (
+			# Appropriate format.
+			# We don't forget to escape whitespaces because of /x modifier.
+			$line =~ /
+				# From and email of a sender.
+				^From\ [a-z0-9][\w\-\.]+\@\w+?(\.\w+){1,}
+				# Week day (and maybe comma).
+				\ +\w{3},?
+				# Month name.
+				\ +\w{3}
+				# Month day.
+				\ +\d{1,2}
+				# Date.
+				\ +\d{1,2}:\d{1,2}:\d{1,2}
+				# Year.
+				\ +\d{4}
+			/x
+			or
+			# Corrupted style.
+			$line =~ /
+				# From and sender's email.
+				^From\ [a-z0-9][\w\-\.]+\@\w+?(\.\w+){1,}
+				# Week day and comma maybe.
+				\ +(\w{3}),?
+				# Day of a month.
+				\ +(\d{1,2})
+				# Name of a month.
+				\ +(\w{3})
+				# Year.
+				\ +(\d{4})
+				# And date.
+				\ +(\d{1,2}:\d{1,2}:\d{1,2})
+			/x
+		) {
+			# we're in top section.
+			$within = "top";
+			
+			# reset all the global variables.
+			$part_id = "";
+			$plain_text_found = 0;
+			$gonna_drop_part = 0;
+			$drop_this_line = 0;
+			$is_base64_body = 0;
+			
+			# check if date format is kind of corrupted.
+			my (
+				$before,
+				$week_day,
+				$month_day,
+				$month,
+				$year,
+				$time
+			) = $line =~ /
+				# The same regex as above (inappropriate style), but
+				# here we do some capture groups.
+				# From + email.
+				^(From\ .+?)
+				# Day of the week and maybe comma.
+				\ +(\w{3}),?
+				# Month day.
+				\ +(\d{1,2})
+				# Month name.
+				\ +(\w{3})
+				# Year.
+				\ +(\d{4})
+				# Date.
+				\ +(\d{1,2}:\d{1,2}:\d{1,2})
+			/x;
+			
+			# if it is - fix it.
+			if ($before) {
+				print "$before  $week_day $month $month_day $time $year\n";
+			} else {
+				# otherwise, just print the line as it is.
+				print $line;
+			}
+			
+			# after "top" the "head" comes.
+			$within = "head";
+			
+			next;
 		}
-		acc+=con;
-		return acc;
-	},""
-)
-}else{//message body has no entries already
-bodystr=inp.substring(inp.indexOf("\n\n")+2)
+	}
+	
+	# all the empty new lines (except thouse which are in the
+	# message body), indicates an end of a current section.
+	if (
+		$line eq "\n"
+		and
+		$within ne "body"
+	) {
+		# do not print redundant newlines.
+		if (not $last_line_empty) {
+			$last_line_empty = 1;
+			
+			print $line;
+		}
+		
+		# as have said, after head there is an empty zone
+		# which lasts untill next part id line or next letter.
+		if ($within eq "head") {
+			$within = "";
+		}
+		
+		# the body message follows message types.
+		elsif  ($within eq "types") {
+			$within = "body";
+			
+			# if we're going to drop this part,
+			# then mark it with drop_this_line
+			# and all until the next part.
+			$drop_this_line = $gonna_drop_part;
+		}
+		
+		next;
+	}
+	else {
+		# if it wasn't a newline - reset the flag.
+		$last_line_empty = 0;
+	}
+	
+	
+	if ($within eq "head") {
+		# some of mail headers may be encoded in base64 and quoted.
+		# we solve both.
+		my ($before,
+			undef,
+			undef,
+			$encoded,
+			$after
+		) = $line =~ /^([^\"]*)\"?(\=\?(UTF-8|utf-8)\?.*\?(.*)\?\=)\"?(.*)/;
+		
+		if ($before) {
+			my $decoded = decode_base64($encoded);
+			
+			print "$before$decoded$after\n";
+		} else {
+			print $line;
+		}
+		
+		next;
+	}
+	
+	# check if current line is a part delimiter.
+	my ( $maybe_part_id ) = $line =~ /^(--.*)$/;
+	
+	# not only must it resemble a part id, but also
+	# be exact same id as it already was declared for this
+	# message letter before.
+	if (
+		$maybe_part_id
+		and
+		(
+			!$part_id
+			or
+			$maybe_part_id =~ $part_id
+		)
+	) {
+		# if part id wasn't set for this message yet,
+		# store is for future references.
+		if (!$part_id) {
+			$part_id = $maybe_part_id;
+		}
+		
+		# if it happened that previous part of a message
+		# was encoded, then just trust it was decoded
+		# successfully and clear the global indicator.
+		if ($is_base64_body) {
+			$is_base64_body = 0;
+			
+			# an encoded message doesn't include a trailing
+			# newline as I can see, so add it.
+			print "\n";
+		}
+		
+		# after *every* part id we expect a section of types.
+		$within = "types";
+		
+		# keep part ids in the message for other utilities
+		# (such as `ema`) to be possible to parse the letter again.
+		# but, of course, these utilities should assume the letter
+		# was formatted with `emp`.
+		# granted, this approach (in combination with line-by-line parse
+		# algorithm) leads to the fact that all the trailing and unused
+		# part identifiers will be printed too.
+		# well, treat them as a sign that some part of an original
+		# letter was excluded.
+		print $line;
+		
+		next;
+	}
+	
+	if ($within eq "types") {		
+		# if line itself declares a message type.
+		my ( $type ) = $line =~ /^Content\-(.*):/;
+		
+		my $type_value;
+		if ($type) {
+			( $type_value ) = $line =~ /: (.*);/;
+			
+			if (!$type_value) {
+				($type_value) = $line =~ /: (.*)$/
+			}
+			
+			# we don't want type declarations in the result anyway.
+			$drop_this_line = 1;
+		}
+		
+		# look, maybe it's a Content-Disposition type declaration.
+		if ($type eq "Disposition") {
+			if ($type_value eq "attachment") {
+				# nice, it's an attachment, do not remove.
+				$gonna_drop_part = 0;
+			}
+		}
+		# ok, maybe it's a Content-Transfer-Encoding?
+		# we need to check it for base64 encoding.
+		elsif ($type eq "Transfer-Encoding") {
+			if ($type_value eq "base64") {
+				# until the next part comes.
+				$is_base64_body = 1;
+			}
+		}
+		# well, maybe it's at least a Content-Type?
+		elsif ($type eq "Type") {
+			# if it's a plain text.
+			if ($type_value eq "text/plain") {
+				# hooray, we found it. no need in html.
+				$plain_text_found = 1;
+			}			
+			# don't worry about attachment Content-Type,
+			# we're in the "else" branch (else from attachment).
+			elsif ($plain_text_found) {
+				$gonna_drop_part = 1;
+			}
+		}
+		
+	}
+	
+	# this is for "types" and "body" sections.
+	unless ($drop_this_line) {
+		# don't forget to decode encoded line before printing.
+		if ($is_base64_body) {
+			print decode_base64($line);
+		}
+		else {
+			print $line;
+		}
+	}	
 }
-/*build up resulting string*/
-var mailstr=`${m.pref}\nFrom: ${m.head.From}\nTo: ${m.head.To}\nSubject: ${m.head.Subject}\n\n${bodystr}\n`
-process.stdout.write(mailstr);//write result to stdout
