@@ -1,345 +1,382 @@
 #!/usr/local/bin/perl
 
-#emp -- email processor and decoder.
-#reads mbox email from stdin, formats it, decodes base64
-#strings, if they are, and writes resulting file to stdout.
-#if a plain text representaion of message body exists,
-#then other body encodings won't be included to the
-#resulting file (except attachments).
+# emp -- email processor.
+#
+# this is its 3'rd version. it involves *much more* more-or-less
+# confident and straightforward parsing that its 2'd version
+# (it appears much easier to implement it though), and it can easily
+# be applied to an absolutely raw file with mails obtained by your
+# mail retrieval agent (e.g. fetchmail(1)), like neither of its
+# precedents can. only interested and not that clear parts of a code
+# are commented (hope that it's pretty clear though).
+#
+# what it does (apart from reading from stdin):
+# - builds up a "From" line for UNIX mbox file format
+#   (however, it doesn't follow it in terms of printing
+#   the date in UTC - it doesn't do that).
+# - leaves only a couple of letter headers (From, To, Date, Subject)
+# - includes html and other weird message formats only if there
+#   is no a plain text representation of a message provided. if it is,
+#   it leaves only it and mail attachments.
+# - performs a base64 decoding in all places it may occur
+#   (headers, message body (text, no attachments)).
+#
+# with all theese features listed, it can be considered as a
+# well-replacement for formail(1) utility (email-formatter,
+# a part of a procmail(1) package).
 
-#a 2'd version actually - first was written in javascript.
-#so, this version is capable of being applied to an entire
-#mbox file, containing a bunch of mails (not like the 1'st
-#version, which could "parse" only a single letter and did
-#it in an awkward way), 'cause now it involves more-or-less
-#confident and straightforward line-by-line parsing.
-#as a feature, it fixes the "From " line delimiter from an
-#incorrect date format (perhaps, my email provider corrupts it):
-#actually swaps string components around.
-#also, it's much faster than its precedent.
-#this version is commented, just for the reader to understand
-#what's going on.
 
-
-# we'll use it for guess what.
+use strict;
 use MIME::Base64;
 
-# a sort of a key that is used as a multipart message part delimiter.
-my $part_id;
+# a list of lines (headers) can be considered as letter-delimiters.
+my @delimiters = (
+	"Delivered-To: ",
+	"Received-SPF: ",
+	"Authentication-Results: ",
+	"ARC-Seal: ",
+	"ARC-Message-Signature: ",
+	"ARC-Authentication-Results: ",
+	"Return-Path: ",
+	"Received: ",
+	"DKIM-Signature: ",
+	"X-Google-DKIM-Signature: ",
+	"X-Gm-Message-State: ",
+	"X-Google-Smtp-Source: ",
+	"X-Received: ",
+	"MIME-Version: ",
+	"References: ",
+	"In-Reply-To: ",
+	"From: ",
+	"Date: ",
+	"Message-ID: ",
+	"Subject: ",
+	"To: ",
+	"Content-Type: "
+);
 
-# sort of a zone of a letter we're currently parsing.
-# it may be either:
-# "top" - the very frist line, indicating a start of a new letter,
-# "head" - letter headers, such as "From:", "To:", "Subject:", etc,
-# "types" - that's not necessary to occur, but it's a section where
-#           different types of a multi-part message are listed.
-# "body" - the message body itself (w/o its "types"),
-# or "" - let's call it "empty zone" - that one that may go after
-#         "head" section; everything up until the first "part id".
-#         in case of non-multi-part letter, the rest part that goes
-#         after mail headers will be treated as empty zone.
-#         well, there are a whole host of different email providers
-#         which do really different formatting of the messages,
-#         so we need to take at least some of them into account.
-my $within = "";
+# a hash-table will be used for saving header field values
+# in case of them appearing not in that exact order I want them to.
+my %wanted_headers = (
+	"From: " => "",
+	"To: " => "",
+	"Subject: " => "",
+	# having a separate date header. it's due to us not doing 
+	# UTC convertion for UNIX mbox "From" delimiter line. and
+	# for seeing the original timezone too.
+	"Date: " => ""
+);
 
-# just a boolean flag, if last printed line was a new line,
-# for us not to print a redundant newline again.
-my $last_line_empty = 0;
+# current message parts.
+my @parts = ();
 
-# this variable tells us if a plain text representaion
-# was found, then we can throw away html-like stuff.
-my $plain_text_found = 0;
+# current part (that will be added to @parts afterwards).
+my %part = ();
 
-# variable is used for cases, when we're still in the process
-# of parsing part types, and we found html-type, and we're going
-# to indicate that everything up until next part must be thrown away.
-my $gonna_drop_part = 0;
+# may be either "head" (mail headers),
+# "message" - a zone preceding a first message part.
+# (it's for multi-part messages only)
+# or "text" - the message text itself (plain text, attachement...).
+my $within = "text";
 
-# this is somewhat akin to `$gonna_drop_part`, but it's only for
-# the line, we're currently in (e.g. type-header - we don't need it).
-my $drop_this_line = 0;
+# a multi-part message delimiter string;
+my $boundary = "";
 
-# a flag, telling us if message body is encoded in base64.
-my $is_base64_body = 0;
+# an output string for current letter being parsed.
+my $letter_output = "";
 
-# read a standart input line-by-line.
-while( my $line = <> ) {
+# a string containing final output of a program.
+my $final_output = "";
+
+# address of a sender (need it for "From" line).
+my $from_addr = "";
+# a date, formatted for "From" line.
+my $date_formatted = "";
+
+my sub format_date {
+	my ($date_input) = @_;
 	
-	# the line that indicates a begining of a new letter in
-	# mbox format is line that begins with "From ".
-	# we want to "catch" this line whether we come from either:
-	#  - empty zone -- as have already been said, it's quite
-	#     possible, especially in case of non-multi-part letter.
-	#  - the message body -- this is in case of multi-part letter;
-	#     every letter entry must end with a newline. so, in case
-	#     of a multi-part letter, we'll have a very last "part id"
-	#     in the end of the message anyway, and in terms of our
-	#     program we'll be in "types zone" (we expect a zone of
-	#     types after *every* part identifier; thanks to an apt
-	#     algorithm of mine), and, since every letter ends with
-	#     an empty line, we'll switch from "types" to message body.
-	#     and after all this, the next mail comes (we're in body).
-	if (
-		!$within
-		or
-		$within eq "body"
-	) {
-		# actually, as far as I know, the line mustn't contain
-		# a valid email address and all that (I didn't read the
-		# specification though), but, however, I'm not that sure
-		# if email provider perform something to distinguish
-		# occurrence of this line withing the message body,
-		# hence I look for a valid email address (and valid
-		# date also) too.
-		# also we should count the case with corrupted date format.
-		if (
-			# Appropriate format.
-			# We don't forget to escape whitespaces because of /x modifier.
-			$line =~ /
-				# From and email of a sender.
-				^From\ [a-z0-9][\w\-\.]+\@\w+?(\.\w+){1,}
-				# Week day (and maybe comma).
-				\ +\w{3},?
-				# Month name.
-				\ +\w{3}
-				# Month day.
-				\ +\d{1,2}
-				# Date.
-				\ +\d{1,2}:\d{1,2}:\d{1,2}
-				# Year.
-				\ +\d{4}
-			/x
-			or
-			# Corrupted style.
-			$line =~ /
-				# From and sender's email.
-				^From\ [a-z0-9][\w\-\.]+\@\w+?(\.\w+){1,}
-				# Week day and comma maybe.
-				\ +(\w{3}),?
-				# Day of a month.
-				\ +(\d{1,2})
-				# Name of a month.
-				\ +(\w{3})
-				# Year.
-				\ +(\d{4})
-				# And date.
-				\ +(\d{1,2}:\d{1,2}:\d{1,2})
-			/x
-		) {
-			# we're in top section.
-			$within = "top";
+	# check if date format is not suitable for mbox "From" line.
+	my (
+		$week_day,
+		$month_day,
+		$month,
+		$year,
+		$time
+	) = $date_input =~ /
+		# Day of the week and maybe comma.
+		(\w{3}),?
+		# Month day.
+		\ +(\d{1,2})
+		# Month name.
+		\ +(\w{3})
+		# Year.
+		\ +(\d{4})
+		# Date.
+		\ +(\d{1,2}:\d{1,2}:\d{1,2})
+	/x;
+	
+	# add a leading zero to the month day if it is required.
+	if (length($month_day) == 1) {
+		$month_day = "0$month_day";
+	}
+	
+	if ($week_day) {
+		return "$week_day $month $month_day $time $year";
+	}
+	
+	return $date_input;
+}
+
+# building up a letter delimiter line (according to UNIX mbox format).
+# we ain't converting the date to UTC format though.
+my sub build_from_line {
+	return "From $from_addr  $date_formatted\n";
+}
+
+# headers may be encoded in base64.
+my sub prepare_header {
+	my ($line) = @_;
+	
+	my ($before,
+		undef,
+		undef,
+		$encoded,
+		$after
+	) = $line =~ /^([^\"]*)\"?(\=\?(UTF-8|utf-8)\?.*\?(.*)\?\=)\"?(.*)/;
+	
+	if ($before) {		
+		my $decoded = decode_base64($encoded);
+		
+		return "$before$decoded$after\n";
+	}
+	
+	return $line;
+}
+
+# if it's a multi-part message then switch to "message",
+# otherwise - to "text".
+# we also flush the header lines here.
+my sub switch_to_message_or_text {
+	if ($boundary) {
+		$within = "message";
+	} else {
+		$within = "text";
+	}
+	
+	my $from_line = build_from_line();
+	
+	my $from = prepare_header($wanted_headers{"From: "});
+	my $to = prepare_header($wanted_headers{"To: "});
+	
+	my $date = $wanted_headers{"Date: "};
+	
+	# letter can easily has no "Subject" header at all.
+	my $subject;
+	if ($wanted_headers{"Subject: "} ne "") {
+		$subject = prepare_header($wanted_headers{"Subject: "});
+	} else {
+		$subject = "Subject: <none>\n";
+	}
+	
+	my $headers = "$from$to$date$subject";
+	
+	$letter_output .= "$from_line$headers\n";
+}
+
+my sub reset_variables {
+	$wanted_headers{"From: "} = "";
+	$wanted_headers{"To: "} = "";
+	$wanted_headers{"Subject: "} = "";
+	$wanted_headers{"Date: "} = "";
+	
+	$boundary = "";
+	$letter_output = "";
+	
+	@parts = ();
+	%part = ();
+}
+
+my sub flush_message {
+	if ($boundary) {
+		my @content_types = map { $_->{Type} } @parts;
+		
+		my @picked_parts = @parts;
+		
+		# drop other text representations if we already get plain text.
+		if (grep(/text\/plain/, @content_types)) {
+			@picked_parts = grep {
+				$_->{Type} eq "text/plain"
+				or
+				$_->{Disposition} eq "attachment"
+			} @parts;
+		}
+		
+		# check the length of the array.
+		# i.e. evaluate it in scalar context.
+		my $picked_len = @picked_parts;
+		
+		my $single_part = $picked_len == 1;
+		my $message_text = "";
+		
+		for my $picked_part (@picked_parts) {
+			my $prepared_text = $picked_part->{Text};
 			
-			# reset all the global variables.
-			$part_id = "";
-			$plain_text_found = 0;
-			$gonna_drop_part = 0;
-			$drop_this_line = 0;
-			$is_base64_body = 0;
-			
-			# check if date format is kind of corrupted.
-			my (
-				$before,
-				$week_day,
-				$month_day,
-				$month,
-				$year,
-				$time
-			) = $line =~ /
-				# The same regex as above (inappropriate style), but
-				# here we do some capture groups.
-				# From + email.
-				^(From\ .+?)
-				# Day of the week and maybe comma.
-				\ +(\w{3}),?
-				# Month day.
-				\ +(\d{1,2})
-				# Month name.
-				\ +(\w{3})
-				# Year.
-				\ +(\d{4})
-				# Date.
-				\ +(\d{1,2}:\d{1,2}:\d{1,2})
-			/x;
-			
-			# if it is - fix it.
-			if ($before) {
-				print "$before  $week_day $month $month_day $time $year\n";
-			} else {
-				# otherwise, just print the line as it is.
-				print $line;
+			if (
+				$picked_part->{"Transfer-Encoding"} eq "base64"
+				and
+				$picked_part->{Disposition} ne "attachment"
+			) {
+				$prepared_text = decode_base64($prepared_text);
 			}
 			
-			# after "top" the "head" comes.
-			$within = "head";
+			if ($single_part) {
+				$message_text .= "$prepared_text\n\n";
+			}
+			else {
+				$message_text .= (
+					"--$boundary\n"
+					.
+					"Content-Type: $picked_part->{Type}\n\n"
+					.
+					$prepared_text
+				);
+			}
+		}
+		
+		if (not $single_part) {
+			$message_text .= "\n\n--$boundary--\n\n\n"
+		}
+		
+		$letter_output .= $message_text;
+	}
+	
+	$final_output .= $letter_output;
+	
+	reset_variables();
+}
+
+# read input line-by-line and accumulate different
+# letter sections with futher flushing them (not all at once).
+while ( my $line = <> ) {
+	
+	if (
+		$within eq "message"
+		or
+		$within eq "text"
+	) {
+		
+		if ($boundary) {
+			if ($line =~ /^--$boundary--/) {
+				if ($within eq "text") {
+					push (@parts, { %part });
+					%part = ();
+				}
+				
+				$within = "text";
+				
+				next;
+			}
 			
+			if ($line =~ /^--$boundary/) {
+				if ($within eq "text") {
+					push (@parts, { %part });
+					%part = ();
+				}
+				
+				$within = "types";
+				
+				next;
+			}
+		}
+		
+	}
+	
+	if ($within eq "text") {
+		for my $delimiter (@delimiters) {
+			if ($line =~ /^$delimiter/) {
+				flush_message();
+				
+				$within = "head";
+				goto handle_head;
+			}
+		}
+		
+		# for multi-part messages we accumulate the content
+		# of each part separately (and then decide which to use).
+		if ($boundary) {
+			$part{"Text"} .= $line;
+		}
+		# for plain text messages we just print all the message text.
+		else {
+			$letter_output .= $line;
+		}
+		
+		next;
+	}
+	
+	if ($within eq "types") {
+		
+		if ($line eq "\n") {
+			$within = "text";
 			next;
 		}
-	}
-	
-	# all the empty new lines (except thouse which are in the
-	# message body), indicates an end of a current section.
-	if (
-		$line eq "\n"
-		and
-		$within ne "body"
-	) {
-		# do not print redundant newlines.
-		if (not $last_line_empty) {
-			$last_line_empty = 1;
-			
-			print $line;
+		
+		my ($type, $value) = (
+			$line =~ /Content-(.*?): (.*?)((;(\s?|\n))|\n)/
+		);
+		
+		if (!$type) {
+			next;
 		}
 		
-		# as have said, after head there is an empty zone
-		# which lasts untill next part id line or next letter.
-		if ($within eq "head") {
-			$within = "";
-		}
-		
-		# the body message follows message types.
-		elsif  ($within eq "types") {
-			$within = "body";
-			
-			# if we're going to drop this part,
-			# then mark it with drop_this_line
-			# and all until the next part.
-			$drop_this_line = $gonna_drop_part;
-		}
-		
-		next;
-	}
-	else {
-		# if it wasn't a newline - reset the flag.
-		$last_line_empty = 0;
-	}
-	
-	
-	if ($within eq "head") {
-		# some of mail headers may be encoded in base64 and quoted.
-		# we solve both.
-		my ($before,
-			undef,
-			undef,
-			$encoded,
-			$after
-		) = $line =~ /^([^\"]*)\"?(\=\?(UTF-8|utf-8)\?.*\?(.*)\?\=)\"?(.*)/;
-		
-		if ($before) {
-			my $decoded = decode_base64($encoded);
-			
-			print "$before$decoded$after\n";
-		} else {
-			print $line;
-		}
-		
-		next;
-	}
-	
-	# check if current line is a part delimiter.
-	my ( $maybe_part_id ) = $line =~ /^(--.*)$/;
-	
-	# not only must it resemble a part id, but also
-	# be exact same id as it already was declared for this
-	# message letter before.
-	if (
-		$maybe_part_id
-		and
-		(
-			!$part_id
+		if (
+			$type eq "Disposition"
 			or
-			$maybe_part_id =~ $part_id
-		)
-	) {
-		# if part id wasn't set for this message yet,
-		# store is for future references.
-		if (!$part_id) {
-			$part_id = $maybe_part_id;
+			$type eq "Transfer-Encoding"
+			or
+			$type eq "Type"
+		) {
+			$part{$type} = $value;
 		}
 		
-		# if it happened that previous part of a message
-		# was encoded, then just trust it was decoded
-		# successfully and clear the global indicator.
-		if ($is_base64_body) {
-			$is_base64_body = 0;
-			
-			# an encoded message doesn't include a trailing
-			# newline as I can see, so add it.
-			print "\n";
-		}
 		
-		# after *every* part id we expect a section of types.
-		$within = "types";
-		
-		# keep part ids in the message for other utilities
-		# (such as `ema`) to be possible to parse the letter again.
-		# but, of course, these utilities should assume the letter
-		# was formatted with `emp`.
-		# granted, this approach (in combination with line-by-line parse
-		# algorithm) leads to the fact that all the trailing and unused
-		# part identifiers will be printed too.
-		# well, treat them as a sign that some part of an original
-		# letter was excluded.
-		print $line;
-		
-		next;
 	}
 	
-	if ($within eq "types") {		
-		# if line itself declares a message type.
-		my ( $type ) = $line =~ /^Content\-(.*):/;
+	# a lable for us to goto.
+	handle_head:
+	if ($within eq "head") {
 		
-		my $type_value;
-		if ($type) {
-			( $type_value ) = $line =~ /: (.*);/;
-			
-			if (!$type_value) {
-				($type_value) = $line =~ /: (.*)$/
-			}
-			
-			# we don't want type declarations in the result anyway.
-			$drop_this_line = 1;
+		if ($line eq "\n") {
+			switch_to_message_or_text();
+			next;
 		}
 		
-		# look, maybe it's a Content-Disposition type declaration.
-		if ($type eq "Disposition") {
-			if ($type_value eq "attachment") {
-				# nice, it's an attachment, do not remove.
-				$gonna_drop_part = 0;
-			}
+		if ($line =~ /boundary=\"(.*)\"/) {
+			$boundary = $1;
 		}
-		# ok, maybe it's a Content-Transfer-Encoding?
-		# we need to check it for base64 encoding.
-		elsif ($type eq "Transfer-Encoding") {
-			if ($type_value eq "base64") {
-				# until the next part comes.
-				$is_base64_body = 1;
-			}
+		
+		if ($line =~ /From: .*\<(.*)\>/) {
+			$from_addr = $1;
 		}
-		# well, maybe it's at least a Content-Type?
-		elsif ($type eq "Type") {
-			# if it's a plain text.
-			if ($type_value eq "text/plain") {
-				# hooray, we found it. no need in html.
-				$plain_text_found = 1;
-			}			
-			# don't worry about attachment Content-Type,
-			# we're in the "else" branch (else from attachment).
-			elsif ($plain_text_found) {
-				$gonna_drop_part = 1;
+		
+		if ($line =~ /Date: (.*)/) {
+			$date_formatted = format_date($1);
+		}
+		
+		# pick and print only headers we want from.
+		for my $wanted_header (keys %wanted_headers) {
+			if ($line =~ /^$wanted_header/) {
+				$wanted_headers{$wanted_header} = $line;
 			}
 		}
 		
 	}
 	
-	# this is for "types" and "body" sections.
-	unless ($drop_this_line) {
-		# don't forget to decode encoded line before printing.
-		if ($is_base64_body) {
-			print decode_base64($line);
-		}
-		else {
-			print $line;
-		}
-	}	
 }
+
+# we need to ensure that the last message was flushed
+# ('cause there ain't handling for end of input).
+flush_message();
+
+print $final_output;
