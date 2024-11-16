@@ -179,7 +179,7 @@ my sub switch_to_message_or_text {
 		$subject = "Subject: <none>\n";
 	}
 	
-	my $headers = "$from$to$date$subject";
+	my $headers = "$date$from$to$subject";
 	
 	$letter_output .= "$from_line$headers\n";
 }
