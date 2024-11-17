@@ -79,7 +79,8 @@ my %wanted_headers = (
 	# having a separate date header. it's due to us not doing 
 	# UTC convertion for UNIX mbox "From" delimiter line. and
 	# for seeing the original timezone too.
-	"Date: " => ""
+	"Date: " => "",
+	"Cc: " => ""
 );
 
 # we store previous header was processed, in order to
@@ -188,6 +189,15 @@ my sub switch_to_message_or_text {
 		$subject = "Subject: <none>\n";
 	}
 	
+	# the same with "Cc" field, but in case of that, we won't
+	# print it at all (compare with dummy value for "Subject").
+	my $cc;
+	if ($wanted_headers{"Cc: "} ne "") {
+		$cc = prepare_header($wanted_headers{"Cc: "});
+	} else {
+		$cc = "";
+	}
+	
 	# because of the fact "From" header (as any other headers)
 	# may be encoded, we want to decode it first (done in `prepare_header`),
 	# for sender address be clear. and only after that want we build the
@@ -198,7 +208,7 @@ my sub switch_to_message_or_text {
 	
 	my $from_line = build_from_line();
 	
-	my $headers = "$date$from$to$subject";
+	my $headers = "$date$from$to$cc$subject";
 	
 	$letter_output .= "$from_line$headers\n";
 }
