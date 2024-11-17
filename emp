@@ -27,7 +27,15 @@
 
 
 use strict;
+# tell to interpret input and output as UTF-8 strings.
+use open ":std", ":encoding(UTF-8)";
+
+# we'll use it for bare decoding base64 strings (message body).
 use MIME::Base64;
+# and for letter headers we'll use a dedicated module
+# ('cause headers may be encoded in a really odd way).
+use Encode qw(encode decode);
+
 
 # a list of lines (headers) can be considered as letter-delimiters.
 my @delimiters = (
@@ -66,6 +74,10 @@ my %wanted_headers = (
 	# for seeing the original timezone too.
 	"Date: " => ""
 );
+
+# we store previous header was processed, in order to
+# append to it in case its value is broken into several lines.
+my $prev_header = "";
 
 # current message parts.
 my @parts = ();
@@ -138,33 +150,23 @@ my sub build_from_line {
 my sub prepare_header {
 	my ($line) = @_;
 	
-	my ($before,
-		undef,
-		undef,
-		$encoded,
-		$after
-	) = $line =~ /^([^\"]*)\"?(\=\?(UTF-8|utf-8)\?.*\?(.*)\?\=)\"?(.*)/;
+	# if header is not somehow encoded, it'll be printed as is.
+	my $decoded = decode("MIME-Header", $line);
 	
-	if ($before) {		
-		my $decoded = decode_base64($encoded);
-		
-		return "$before$decoded$after\n";
-	}
-	
-	return $line;
+	return $decoded;
 }
 
 # if it's a multi-part message then switch to "message",
 # otherwise - to "text".
 # we also flush the header lines here.
 my sub switch_to_message_or_text {
+	$prev_header = "";
+	
 	if ($boundary) {
 		$within = "message";
 	} else {
 		$within = "text";
 	}
-	
-	my $from_line = build_from_line();
 	
 	my $from = prepare_header($wanted_headers{"From: "});
 	my $to = prepare_header($wanted_headers{"To: "});
@@ -179,6 +181,16 @@ my sub switch_to_message_or_text {
 		$subject = "Subject: <none>\n";
 	}
 	
+	# because of the fact "From" header (as any other headers)
+	# may be encoded, we want to decode it first (done in `prepare_header`),
+	# for sender address be clear. and only after that want we build the
+	# "From" delimiter line up.
+	if ($from =~ /<(.*)>/) {
+		$from_addr = $1;
+	}
+	
+	my $from_line = build_from_line();
+	
 	my $headers = "$date$from$to$subject";
 	
 	$letter_output .= "$from_line$headers\n";
@@ -192,6 +204,7 @@ my sub reset_variables {
 	
 	$boundary = "";
 	$letter_output = "";
+	$from_addr = "";
 	
 	@parts = ();
 	%part = ();
@@ -352,12 +365,32 @@ while ( my $line = <> ) {
 			next;
 		}
 		
-		if ($line =~ /boundary=\"(.*)\"/) {
-			$boundary = $1;
+		# if line does NOT start with spaces, then it's
+		# a begining of a new header field, so remember this.
+		if ($line =~ /^([^\t\s]*?: ).*/) {
+			$prev_header = $1;
+		}
+		# otherwise, it's a continuation of previous header value
+		# and we want to append it to already stored value so that
+		# it to be a single string.
+		else {
+			# if it resembles an encoded string, we want to cut
+			# all the leading spaces off.
+			if ($line =~ /[\s\t]*=\?.*?\?(B|Q)\?(.*)\?=/) {
+				$line =~ s/^[\t\s]*//;
+			}
+			
+			# now, append it to previously saved value (from which
+			# we need to remove the ending newline).
+			if (grep(/$prev_header/, keys %wanted_headers)) {
+				$wanted_headers{$prev_header} =~ s/\n//;
+				$wanted_headers{$prev_header} .= $line;
+				next;
+			}
 		}
 		
-		if ($line =~ /From: .*\<(.*)\>/) {
-			$from_addr = $1;
+		if ($line =~ /boundary=\"(.*)\"/) {
+			$boundary = $1;
 		}
 		
 		if ($line =~ /Date: (.*)/) {
