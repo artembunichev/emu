@@ -39,6 +39,9 @@ use Encode qw(encode decode);
 
 # a list of lines (headers) can be considered as letter-delimiters.
 my @delimiters = (
+	"Path: ",
+	"Newsgroups: ",
+	"Approved: ",
 	"Delivered-To: ",
 	"Received-SPF: ",
 	"Authentication-Results: ",
@@ -52,6 +55,9 @@ my @delimiters = (
 	"X-Gm-Message-State: ",
 	"X-Google-Smtp-Source: ",
 	"X-Received: ",
+	"X-Trace: ",
+	"X-Complaints-To: ",
+	"Original-X-From: ",
 	"MIME-Version: ",
 	"References: ",
 	"In-Reply-To: ",
@@ -60,6 +66,7 @@ my @delimiters = (
 	"Message-ID: ",
 	"Subject: ",
 	"To: ",
+	"Cc: ",
 	"Content-Type: "
 );
 
