@@ -119,13 +119,13 @@ my sub format_date {
 		# Day of the week and maybe comma.
 		(\w{3}),?
 		# Month day.
-		\ +(\d{1,2})
+		\s+(\d{1,2})
 		# Month name.
-		\ +(\w{3})
+		\s+(\w{3})
 		# Year.
-		\ +(\d{4})
+		\s+(\d{4})
 		# Date.
-		\ +(\d{1,2}:\d{1,2}:\d{1,2})
+		\s+(\d{1,2}:\d{1,2}:\d{1,2})
 	/x;
 	
 	# add a leading zero to the month day if it is required.
@@ -336,7 +336,7 @@ while ( my $line = <> ) {
 		}
 		
 		my ($type, $value) = (
-			$line =~ /Content-(.*?): (.*?)((;(\s?|\n))|\n)/
+			$line =~ /Content-(.*?):\s(.*?)((;(\s?|\n))|\n)/
 		);
 		
 		if (!$type) {
@@ -367,7 +367,7 @@ while ( my $line = <> ) {
 		
 		# if line does NOT start with spaces, then it's
 		# a begining of a new header field, so remember this.
-		if ($line =~ /^([^\t\s]*?: ).*/) {
+		if ($line =~ /^([^\t\s]*?:\s).*/) {
 			$prev_header = $1;
 		}
 		# otherwise, it's a continuation of previous header value
@@ -393,7 +393,7 @@ while ( my $line = <> ) {
 			$boundary = $1;
 		}
 		
-		if ($line =~ /Date: (.*)/) {
+		if ($line =~ /Date:\s(.*)/) {
 			$date_formatted = format_date($1);
 		}
 		
