@@ -257,11 +257,11 @@ my sub flush_message {
 				and
 				$picked_part->{Disposition} ne "attachment"
 			) {
-				$prepared_text = decode_base64($prepared_text);
+				$prepared_text = decode_base64($prepared_text) . "\n";
 			}
 			
 			if ($single_part) {
-				$message_text .= "$prepared_text\n\n";
+				$message_text .= $prepared_text;
 			}
 			else {
 				$message_text .= (
@@ -274,8 +274,8 @@ my sub flush_message {
 			}
 		}
 		
-		if (not $single_part) {
-			$message_text .= "\n\n--$boundary--\n\n\n"
+		if (not $single_part) {			
+			$message_text .= "--$boundary--\n\n"
 		}
 		
 		$letter_output .= $message_text;
