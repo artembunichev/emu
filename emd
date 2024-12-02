@@ -191,7 +191,12 @@ while ( my $line = <FORMATTER_OUT> ) {
 		# can take it as is, 'cause we've just piped a raw mail
 		# into formatter, thus it mustn't be encoded (if the formatter's nice,
 		# like emp).
-		if ($line =~ /From:\s.*\<(.*)\>/) {
+		# keep in mind, that sender's address may not be enclosed
+		# within angle brackets.
+		if (
+			$line =~ /^From:\s.*\<(.*)\>/
+			or $line =~ /^From: ([^<]*)\n/
+		) {
 			$sender_addr = $1;
 		}
 		
