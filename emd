@@ -3,7 +3,7 @@
 # emd -- email disposer.
 #
 # it's a program for receiving mails were obtained by your
-# mail-fetch program (fetchmail(1) as an example) pipe them
+# mail-fetch program (`emo`, as an example) pipe them
 # into mail-formatter (such as emp) and finally dispose them
 # (i.e. pick an appropriate file for them to be stored in).
 # it also can notify you by the means of a particular program

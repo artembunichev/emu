@@ -6,7 +6,7 @@
 # confident and straightforward parsing that its 2'd version
 # (it appears much easier to implement it though), and it can easily
 # be applied to an absolutely raw file with mails obtained by your
-# mail retrieval agent (e.g. fetchmail(1)), like neither of its
+# mail retrieval agent (e.g. `emo` utility), like neither of its
 # precedents can. only interested and not that clear parts of a code
 # are commented (hope that it's pretty clear though).
 #
