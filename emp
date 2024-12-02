@@ -202,7 +202,13 @@ my sub switch_to_message_or_text {
 	# may be encoded, we want to decode it first (done in `prepare_header`),
 	# for sender address be clear. and only after that want we build the
 	# "From" delimiter line up.
-	if ($from =~ /<(.*)>/) {
+	#
+	# and don't forget that e-mail address of a sender may not be enclosed
+	# within angle brackets. in this case, all after "From: " is an address.
+	if (
+		$from =~ /(<(.*)>)/
+		or $from =~ /^From: ([^<]*)\n/
+	) {
 		$from_addr = $1;
 	}
 	
