@@ -227,8 +227,6 @@ validate_config();
 
 # now, create a connection to IMAP server, using the
 # data from the configuration.
-$imap = Mail::IMAPClient->new;
-
 $imap = Mail::IMAPClient->new(
 	Server => $config{serv},
 	User => $config{login},
