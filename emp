@@ -20,10 +20,6 @@
 #   it leaves only it and mail attachments (and inline-attachments).
 # - performs a base64 decoding in all places it may occur
 #   (headers, message body (text, no attachments)).
-#
-# with all theese features listed, it can be considered as a
-# well-replacement for formail(1) utility (email-formatter,
-# a part of a procmail(1) package).
 
 
 use strict;
