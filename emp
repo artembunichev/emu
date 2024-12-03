@@ -83,6 +83,10 @@ my %wanted_headers = (
 # append to it in case its value is broken into several lines.
 my $prev_header = "";
 
+# exactly the same reason we need it as with `$prev_header`, but
+# now it's not a header, but message part type.
+my $prev_type = "";
+
 # current message parts.
 my @parts = ();
 
@@ -241,13 +245,13 @@ my sub flush_message {
 		my @picked_parts = @parts;
 		
 		# drop other text representations if we already get plain text.
-		if (grep(/text\/plain/, @content_types)) {
+		if (grep(/^text\/plain/, @content_types)) {
 			@picked_parts = grep {
-				$_->{Type} eq "text/plain"
+				$_->{Type} =~ /^text\/plain/
 				or
-				$_->{Disposition} eq "attachment"
+				$_->{Disposition} =~ /^attachment/
 				or
-				$_->{Disposition} eq "inline"
+				$_->{Disposition} =~ /^inline/
 			} @parts;
 		}
 		
@@ -262,11 +266,11 @@ my sub flush_message {
 			my $prepared_text = $picked_part->{Text};
 			
 			if (
-				$picked_part->{"Transfer-Encoding"} eq "base64"
+				$picked_part->{"Transfer-Encoding"} =~ /^base64/
 				and
-				$picked_part->{Disposition} ne "attachment"
+				not ($picked_part->{Disposition} =~ /^attachment/)
 				and
-				$picked_part->{Disposition} ne "inline"
+				not ($picked_part->{Disposition} =~ /^inline/)
 			) {
 				$prepared_text = decode_base64($prepared_text) . "\n";
 			}
@@ -275,10 +279,37 @@ my sub flush_message {
 				$message_text .= $prepared_text;
 			}
 			else {
+				# now, we are going to provide a filename for attachment.
+				# the thing is, it may either be specified in Conten-Disposition
+				# (as "filename") or in Content-Type (as "name").
+				# but, since we want to print "Content-Type" line anyway, let's
+				# check for Disposition first and if it has a "filename" append
+				# it to the Content-Type, but leave only the first component of it.
+				# and if there's no "filename" here, we'll blindly print the
+				# whole Content-Type line, just hoping there will be a "name" there.
+				my $filename;
+				if ($picked_part->{Disposition} =~ /^attachment/
+					or $picked_part->{Disposition} =~ /^inline/
+				) {
+					# "filename" (as well as "name") may or may not be quoted.
+					if ($picked_part->{Disposition} =~ /filename=\"?([^\"]*)\"?/) {
+						$filename = $1;
+						$picked_part->{Type} =~ s/;.*//;
+					}
+				}
+				
+				my $type_line;
+				if ($filename) {
+					$type_line = "Content-Type: $picked_part->{Type}; name=\"$filename\"\n\n";
+				}
+				else {
+					$type_line = "Content-Type: $picked_part->{Type}\n\n";
+				}
+				
 				$message_text .= (
 					"--$boundary\n"
 					.
-					"Content-Type: $picked_part->{Type}\n\n"
+					"$type_line"
 					.
 					$prepared_text
 				);
@@ -390,10 +421,23 @@ while ( my $line = <> ) {
 		}
 		
 		my ($type, $value) = (
-			$line =~ /Content-(.*?):\s(.*?)((;(\s?|\n))|\n)/
+			$line =~ /Content-(.*?):\s(.*?)\n/
 		);
 		
+		# this means that line most definitely start with spaces
+		# and we will append this line to the end of last saved type.
 		if (!$type) {
+			if (
+				$prev_type eq "Disposition"
+				or
+				$prev_type eq "Transfer-Encoding"
+				or
+				$prev_type eq "Type"
+			) {
+				$line =~ s/[\t\s\n]//g;
+				$part{$prev_type} .= "; $line";
+			}
+			
 			next;
 		}
 		
@@ -405,6 +449,9 @@ while ( my $line = <> ) {
 			$type eq "Type"
 		) {
 			$part{$type} = $value;
+			$prev_type = $type;
+		} else {
+			$prev_type = "";
 		}
 		
 		
