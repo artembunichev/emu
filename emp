@@ -17,7 +17,7 @@
 # - leaves only a couple of letter headers (From, To, Date, Subject)
 # - includes html and other weird message formats only if there
 #   is no a plain text representation of a message provided. if it is,
-#   it leaves only it and mail attachments.
+#   it leaves only it and mail attachments (and inline-attachments).
 # - performs a base64 decoding in all places it may occur
 #   (headers, message body (text, no attachments)).
 #
@@ -101,6 +101,11 @@ my $within = "text";
 
 # a multi-part message delimiter string;
 my $boundary = "";
+
+# these variables will be used for hadnling nested
+# boundary parts (if there will be such).
+my $boundary_nested = "";
+my $after_nested_part_types = 0;
 
 # an output string for current letter being parsed.
 my $letter_output = "";
@@ -245,6 +250,8 @@ my sub flush_message {
 				$_->{Type} eq "text/plain"
 				or
 				$_->{Disposition} eq "attachment"
+				or
+				$_->{Disposition} eq "inline"
 			} @parts;
 		}
 		
@@ -262,6 +269,8 @@ my sub flush_message {
 				$picked_part->{"Transfer-Encoding"} eq "base64"
 				and
 				$picked_part->{Disposition} ne "attachment"
+				and
+				$picked_part->{Disposition} ne "inline"
 			) {
 				$prepared_text = decode_base64($prepared_text) . "\n";
 			}
@@ -295,7 +304,6 @@ my sub flush_message {
 # read input line-by-line and accumulate different
 # letter sections with futher flushing them (not all at once).
 while ( my $line = <> ) {
-	
 	if (
 		$within eq "message"
 		or
@@ -303,7 +311,16 @@ while ( my $line = <> ) {
 	) {
 		
 		if ($boundary) {
-			if ($line =~ /^--$boundary--/) {
+			# check for end-boundary.
+			if ($line =~ /^--$boundary--/
+				or ($boundary_nested and
+					$line =~ /^--$boundary_nested--/))
+			{
+				# reset nested boundary marker.
+				if ($line =~ /^--$boundary_nested--/) {
+					$boundary_nested = "";
+				}
+				
 				if ($within eq "text") {
 					push (@parts, { %part });
 					%part = ();
@@ -314,7 +331,11 @@ while ( my $line = <> ) {
 				next;
 			}
 			
-			if ($line =~ /^--$boundary/) {
+			# check for start-boundary.
+			if ($line =~ /^--$boundary/
+				or ($boundary_nested and
+					$line =~ /^--$boundary_nested/))
+				{
 				if ($within eq "text") {
 					push (@parts, { %part });
 					%part = ();
@@ -354,7 +375,21 @@ while ( my $line = <> ) {
 	if ($within eq "types") {
 		
 		if ($line eq "\n") {
+			# we don't want to store a part that tells that
+			# it will use a nested boundary to separate it's own
+			# parts (usually it has a "multipart/related" Content-Type).
+			if ($after_nested_part_types) {
+				%part = ();
+				$after_nested_part_types = 0;
+			}
+			
 			$within = "text";
+			next;
+		}
+		
+		if ($line =~ /boundary=\"(.*)\"/) {
+			$boundary_nested = $1;
+			$after_nested_part_types = 1;
 			next;
 		}
 		
