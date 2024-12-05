@@ -242,17 +242,41 @@ my sub flush_message {
 	if ($boundary) {
 		my @content_types = map { $_->{Type} } @parts;
 		
-		my @picked_parts = @parts;
+		my @picked_parts;
 		
-		# drop other text representations if we already get plain text.
-		if (grep(/^text\/plain/, @content_types)) {
-			@picked_parts = grep {
-				$_->{Type} =~ /^text\/plain/
-				or
-				$_->{Disposition} =~ /^attachment/
-				or
-				$_->{Disposition} =~ /^inline/
-			} @parts;
+		# tell if we have at least one text/plain part.
+		my $got_plain_text = 0;
+		
+		# determine a value for `$got_plain_text`.
+		for my $part (@parts) {
+			# it's important that we are not interested in
+			# plain/text attachments, in terms of we don't
+			# treat them as *body* message direct text.
+			if ($part->{Type} =~ /^text\/plain/
+				and not ($part->{Disposition} =~ /^attachment/)
+				and not ($part->{Disposition} =~ /^inline/)
+			) {
+				$got_plain_text = 1;
+			}
+		}
+		
+		# if we got a plain text, then we can pick up the
+		# parts we're interested in. pick a text/plain
+		# body and all the attachments.
+		if ($got_plain_text) {
+			for my $part (@parts) {
+				if ($part->{Type} =~ /^text\/plain/
+					or $part->{Disposition} =~ /^attachment/
+					or $part->{Disposition} =~ /^inline/
+				) {
+					push @picked_parts, $part;
+				}
+			}
+		}
+		# if body wasn't encoded in plain text, then, alas,
+		# we include all the presented parts in the output.
+		else {
+			@picked_parts = @parts;
 		}
 		
 		# check the length of the array.
