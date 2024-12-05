@@ -190,7 +190,7 @@ sub dispose_msgs {
 		
 		close(MDA);
 		
-		print "[emo]: messages obtained: @{[$idx+1]}/$total.\n";
+		print "[emo]: mails obtained: @{[$idx+1]}/$total.\n";
 	}
 }
 
