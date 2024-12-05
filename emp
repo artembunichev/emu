@@ -265,7 +265,13 @@ my sub flush_message {
 		# body and all the attachments.
 		if ($got_plain_text) {
 			for my $part (@parts) {
-				if ($part->{Type} =~ /^text\/plain/
+				# save a version of body text without newlines
+				# in order to check does it make any sense.
+				(my $text_chopped = $part->{Text}) =~ s/\n//g;
+				
+				if (
+					($part->{Type} =~ /^text\/plain/
+						and $text_chopped)
 					or $part->{Disposition} =~ /^attachment/
 					or $part->{Disposition} =~ /^inline/
 				) {
