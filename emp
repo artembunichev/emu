@@ -350,6 +350,8 @@ my sub flush_message {
 			$message_text .= "--$boundary--\n\n"
 		}
 		
+		$message_text .= "\n";
+		
 		$letter_output .= $message_text;
 	}
 	
