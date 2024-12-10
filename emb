@@ -161,7 +161,7 @@ while (my $line = <STDIN>) {
 # if our walk didn't give any results, most likely
 # the message index was specified wrong.
 if ($which and not $final_output) {
-	die "emb: wrong body index specified.\n";
+	die "[emb]: wrong body index specified.\n";
 }
 
 # if we didn't specify and particular index to obtain

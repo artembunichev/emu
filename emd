@@ -162,7 +162,7 @@ $out_filename = $config{default};
 # then read the output from it, we need to open the program file
 # both for reading and writing. here the `open2` we have.
 open2(\*FORMATTER_OUT, \*FORMATTER_IN, $config{formatter})
-	or die "emd: Can't execute mail formatter you specified: $config{formatter}.\n";
+	or die "[emd]: Can't execute mail formatter you specified: $config{formatter}.\n";
 
 # pass or stdin to stdin of out formatter.
 print FORMATTER_IN <STDIN>;
@@ -214,7 +214,7 @@ while ( my $line = <FORMATTER_OUT> ) {
 				# complain if the pattern doesn't actually is a valid
 				# perl-like regex. but don't die, just skip it.
 				else {
-					print STDERR "emd: wrong pattern specified: $pattern.\n";
+					print STDERR "[emd]: wrong pattern specified: $pattern.\n";
 					next;
 				}
 				
@@ -237,7 +237,7 @@ while ( my $line = <FORMATTER_OUT> ) {
 
 # open disposition file and append mail to it.
 open(OUT, ">> $out_filename")
-	or die "emd: can't open a disposition file: $out_filename\n";
+	or die "[emd]: can't open a disposition file: $out_filename\n";
 
 print OUT $final_output;
 
