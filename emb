@@ -172,7 +172,12 @@ if (not $which and $multipart) {
 		my $part_type = $parts[$idx];
 		my $printed_idx = $idx + 1;
 		
-		my $string = "$printed_idx: $part_type\n";
+		my $mb_attach_mark = "";
+		if ($part_type =~ /; (file)?name=\".*\"/) {
+			$mb_attach_mark = "[a] ";
+		}
+		
+		my $string = "$printed_idx: $mb_attach_mark$part_type\n";
 		
 		$final_output .= $string;
 	}
