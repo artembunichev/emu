@@ -208,6 +208,23 @@ sub grab_mode {
 # them as well.
 sub daemon_mode {
 	while (1) {
+		
+		# handle connection time out.
+		while (!$imap->noop) {
+			# try to reconnect;
+			$imap->reconnect;
+			
+			# now check the result of our attempt.
+			if ($imap->IsConnected()) {
+				# we're connected. cool.
+				last;
+			}
+			else {
+				# try again after a while.
+				sleep 1;
+			}
+		}
+		
 		my @msgs = $imap->search("UNSEEN");
 		
 		dispose_msgs @msgs;
