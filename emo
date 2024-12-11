@@ -5,7 +5,7 @@
 # this is a program for either simple fetching all the emails
 # from the IMAP server or simple running a daemon, that will
 # look for new (unread) emails on the server.
-# in both cases messages are pipe into specified mda.
+# in both cases messages are piped into specified mda.
 # 
 # please, have a look at this source code (it's rather simple) -
 # it describes almost all the aspects you have to know to run
