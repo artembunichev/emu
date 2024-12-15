@@ -355,7 +355,7 @@ my sub flush_message {
 		$letter_output .= $message_text;
 	}
 	
-	$final_output .= $letter_output;
+	$final_output .= $letter_output . "\n";
 	
 	reset_variables();
 }
