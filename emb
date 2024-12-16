@@ -50,13 +50,21 @@ my $part_idx = 1;
 # for invoking without arguments on multi-part letter.
 my @parts = ();
 
+# an indicator that we've already printed a requested
+# part and now we're going to just read standard input
+# and do nothing with it (it's very important when
+# program's called via pipe, so that not to cause deadlocks).
+my $discard_stdin = 0;
+
 my $final_output = "";
 
-
 while (my $line = <STDIN>) {
+	# throw stdin away.
+	if ($discard_stdin) { next };
+	
 	if ($print_till_next and $is_printing) {
 		if ($line =~ /--$boundary/) {
-			last;
+			$discard_stdin = 1;
 		} else {
 			$final_output .= $line;
 			next;
