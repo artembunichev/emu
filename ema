@@ -10,6 +10,11 @@
 #
 # if desired, particular attachment indexes for extracting
 # may be specified as arguments.
+#
+# it has a special argument "l", which turns the program into
+# list mode, in which it only prints all the found attachments
+# in the message with their indexes for picking (they're actually
+# the same ones that `emb` uses).
 
 
 use strict;
@@ -31,8 +36,24 @@ my $dest = "/tmp/$dest_dir";
 
 
 # Global variables.
+
 my $stdin = "";
-my @which = @ARGV;
+
+# if "l" specified as a first argument, then
+# we show all the attachments in the letter
+# (using `emb` output format).
+my $list_mode = @ARGV[0] eq "l";
+
+# if we're not in the list mode - save potential
+# indexes to extract.
+my @which;
+if (not $list_mode) {
+	@which = @ARGV;
+}
+
+# use it as mark that at least one attachment
+# was found, hence we don't need to create a
+# destination directory (common for all attachments) again.
 my $att_found = 0;
 
 
@@ -56,6 +77,12 @@ while (my $emb_line = <EMB_OUT>) {
 	if (
 		$emb_line =~ /^(\d+):\s\[a\].*?name=\"(.*)\"/
 	) {
+		# just print this line and that's it.
+		if ($list_mode) {
+			print "$emb_line";
+			next;
+		}
+		
 		# grab the index which we'll later use to get
 		# an attachment actual content via `emb` again.
 		my $idx = $1;
@@ -110,7 +137,7 @@ while (my $emb_line = <EMB_OUT>) {
 close (EMB_OUT);
 
 # if we haven't find a single attachment we are
-# interested in - well, just print this error.
-if (not $att_found) {
+# interested in (if we are) - well, just print this error.
+if (not $list_mode and not $att_found) {
 	die "[ema]: no attachments found.\n";
 }
